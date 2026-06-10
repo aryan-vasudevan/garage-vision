@@ -2,128 +2,156 @@
 //  RoboflowClient.swift
 //  garage-vision
 //
-//  Calls a Roboflow Hosted Workflow with a single image and extracts any
-//  recognized plate strings from the response.
+//  Runs the "Custom Workflow 5" pipeline on a single camera frame.
+//
+//  The workflow definition is embedded in the app (workflow.json) and POSTed
+//  inline to Roboflow's serverless `/infer/workflows` endpoint, so the app runs
+//  the exact pipeline regardless of the saved-workflow deploy/cache state. To
+//  pull a freshly-tuned version from Roboflow, run scripts/pull_workflow.py.
+//
+//  Workflow outputs (grounded against the real definition):
+//    - raw_vehicle_predictions : car/truck detections
+//    - cars_in_zone            : detections inside the driveway zone (has .predictions[])
+//    - license_plates          : rolled-up plate detections
+//    - plate_text              : collapsed OCR text — null, or a list of strings
 //
 
 import Foundation
 
 enum RoboflowError: LocalizedError {
-    case badConfiguration
-    case network
-    case http(Int, String)
+    case missingSpec
+    case http(status: Int, message: String)
+    case emptyResponse
+    case decoding(String)
 
     var errorDescription: String? {
         switch self {
-        case .badConfiguration: return "Roboflow workspace/workflow/endpoint is invalid."
-        case .network: return "No response from Roboflow."
-        case .http(let code, _): return "Roboflow returned HTTP \(code)."
+        case .missingSpec:
+            return "Bundled workflow.json is missing or unreadable."
+        case .http(let status, _):
+            return "Roboflow returned HTTP \(status)."
+        case .emptyResponse:
+            return "Roboflow returned no output."
+        case .decoding(let detail):
+            return "Could not parse Roboflow response: \(detail)"
         }
     }
 }
 
 struct RoboflowClient {
     var apiKey: String
-    var workspace: String
-    var workflowID: String
     var endpoint: String
 
+    /// Per-request timeout and retry policy for transient failures.
+    var requestTimeout: TimeInterval = 15
+    var maxAttempts: Int = 3
+
     struct Result {
+        /// Recognized plate strings (empty when no plate was read).
         let plates: [String]
-        let rawResponse: String
+        /// Number of vehicles detected inside the driveway zone.
+        let carsInZone: Int
     }
 
-    func runWorkflow(imageJPEG: Data) async throws -> Result {
-        let trimmedEndpoint = endpoint.hasSuffix("/") ? String(endpoint.dropLast()) : endpoint
-        guard let url = URL(string: "\(trimmedEndpoint)/infer/workflows/\(workspace)/\(workflowID)") else {
-            throw RoboflowError.badConfiguration
+    /// The embedded workflow specification, loaded once from the app bundle.
+    private static let specification: [String: Any]? = {
+        guard let url = Bundle.main.url(forResource: "workflow", withExtension: "json"),
+              let data = try? Data(contentsOf: url),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
         }
+        return json
+    }()
+
+    private var runURL: URL? {
+        let base = endpoint.hasSuffix("/") ? String(endpoint.dropLast()) : endpoint
+        return URL(string: "\(base)/infer/workflows")
+    }
+
+    /// Run the workflow on one JPEG frame. Retries transient/5xx failures with
+    /// exponential backoff; throws a typed `RoboflowError` on give-up.
+    func detectPlate(in imageJPEG: Data) async throws -> Result {
+        guard let spec = Self.specification else { throw RoboflowError.missingSpec }
+        guard let url = runURL else { throw RoboflowError.emptyResponse }
 
         let body: [String: Any] = [
             "api_key": apiKey,
+            "specification": spec,
             "inputs": ["image": ["type": "base64", "value": imageJPEG.base64EncodedString()]]
         ]
+        let httpBody = try JSONSerialization.data(withJSONObject: body)
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        request.timeoutInterval = 15
+        request.httpBody = httpBody
+        request.timeoutInterval = requestTimeout
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw RoboflowError.network }
-        let raw = String(data: data, encoding: .utf8) ?? ""
-        guard (200..<300).contains(http.statusCode) else {
-            throw RoboflowError.http(http.statusCode, raw)
+        var lastError: Error = RoboflowError.emptyResponse
+        for attempt in 1...maxAttempts {
+            do {
+                return try await send(request)
+            } catch let error as RoboflowError {
+                // Don't retry client-side mistakes (bad key/spec, 4xx).
+                if case .http(let status, _) = error, (400..<500).contains(status) { throw error }
+                lastError = error
+            } catch {
+                lastError = error
+            }
+
+            if attempt < maxAttempts {
+                let backoff = pow(2.0, Double(attempt - 1)) * 0.5   // 0.5s, 1s, ...
+                try? await Task.sleep(nanoseconds: UInt64(backoff * 1_000_000_000))
+            }
         }
-
-        let decoded = try JSONDecoder().decode(JSONValue.self, from: data)
-        return Result(plates: Self.extractPlates(from: decoded), rawResponse: raw)
+        throw lastError
     }
 
-    /// Keys whose string values are treated as candidate plate text.
-    /// TODO: tighten this to the exact output name of YOUR workflow once it's built,
-    /// e.g. just ["plate_text"] — right now it casts a wide net and relies on the
-    /// plate-match step to filter out noise (detection class names, etc).
-    static let plateKeys = [
-        "plate", "license", "ocr", "recognized", "registration", "text", "label", "prediction"
-    ]
+    private func send(_ request: URLRequest) async throws -> Result {
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw RoboflowError.emptyResponse }
+        guard (200..<300).contains(http.statusCode) else {
+            let message = String(data: data.prefix(500), encoding: .utf8) ?? ""
+            throw RoboflowError.http(status: http.statusCode, message: message)
+        }
+        return try Self.parse(data)
+    }
 
-    static func extractPlates(from value: JSONValue) -> [String] {
-        var found: [String] = []
+    /// Parse defensively from the real output keys.
+    static func parse(_ data: Data) throws -> Result {
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let outputs = root["outputs"] as? [[String: Any]],
+              let first = outputs.first else {
+            throw RoboflowError.decoding("missing 'outputs' array")
+        }
 
-        func walk(_ value: JSONValue, key: String?) {
-            switch value {
-            case .string(let s):
-                if let key = key?.lowercased(),
-                   plateKeys.contains(where: { key.contains($0) }) {
-                    let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !trimmed.isEmpty { found.append(trimmed) }
-                }
-            case .array(let arr):
-                arr.forEach { walk($0, key: key) }
-            case .object(let obj):
-                for (k, v) in obj { walk(v, key: k) }
-            case .number, .bool, .null:
+        let plates = plateStrings(from: first["plate_text"])
+
+        var carsInZone = 0
+        if let zone = first["cars_in_zone"] as? [String: Any],
+           let predictions = zone["predictions"] as? [Any] {
+            carsInZone = predictions.count
+        }
+
+        return Result(plates: plates, carsInZone: carsInZone)
+    }
+
+    /// `plate_text` is `null`, a string, or (nested) lists of strings — the OCR
+    /// collapse yields shapes like `[["GWAK 022"]]`. Flatten recursively to plain strings.
+    private static func plateStrings(from value: Any?) -> [String] {
+        var out: [String] = []
+        func walk(_ v: Any?) {
+            switch v {
+            case let s as String:
+                let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { out.append(trimmed) }
+            case let array as [Any]:
+                array.forEach { walk($0) }
+            default:
                 break
             }
         }
-
-        walk(value, key: nil)
-
-        // De-duplicate while preserving order.
-        var seen = Set<String>()
-        return found.filter { seen.insert($0).inserted }
-    }
-}
-
-/// Minimal recursive JSON model so we can read an arbitrarily-shaped workflow response.
-enum JSONValue: Decodable {
-    case string(String)
-    case number(Double)
-    case bool(Bool)
-    case null
-    case array([JSONValue])
-    case object([String: JSONValue])
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        if container.decodeNil() {
-            self = .null
-        } else if let b = try? container.decode(Bool.self) {
-            self = .bool(b)
-        } else if let n = try? container.decode(Double.self) {
-            self = .number(n)
-        } else if let s = try? container.decode(String.self) {
-            self = .string(s)
-        } else if let a = try? container.decode([JSONValue].self) {
-            self = .array(a)
-        } else if let o = try? container.decode([String: JSONValue].self) {
-            self = .object(o)
-        } else {
-            throw DecodingError.dataCorrupted(
-                .init(codingPath: decoder.codingPath, debugDescription: "Unsupported JSON value")
-            )
-        }
+        walk(value)
+        return out
     }
 }

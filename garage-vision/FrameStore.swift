@@ -20,9 +20,10 @@ nonisolated final class FrameStore: @unchecked Sendable {
     private var generation = 0
     private let ciContext = CIContext()
 
-    /// Longest-side cap for the uploaded image. Big enough to keep a plate legible,
-    /// small enough to keep the upload/inference round-trip quick.
-    private let maxDimension: CGFloat = 1280
+    /// Longest-side cap for the uploaded image. Kept high (near-native) so the
+    /// workflow's driveway zone — which is calibrated to a full portrait frame —
+    /// lines up with the vehicle detections. Only guards against absurd sizes.
+    private let maxDimension: CGFloat = 3840
 
     /// Suspend until the next camera frame arrives (as JPEG), or `nil` on timeout.
     func requestFrame(timeout: TimeInterval) async -> Data? {

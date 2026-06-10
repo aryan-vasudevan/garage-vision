@@ -8,12 +8,11 @@ import UIKit
 
 @MainActor
 final class AppModel {
-    let settings = AppSettings()
     let camera = CameraManager()
     let engine: DetectionEngine
 
     init() {
-        engine = DetectionEngine(camera: camera, settings: settings)
+        engine = DetectionEngine(camera: camera)
     }
 }
 
@@ -21,16 +20,13 @@ struct ContentView: View {
     @State private var model = AppModel()
 
     var body: some View {
-        MainView(engine: model.engine, settings: model.settings, camera: model.camera)
+        MainView(engine: model.engine, camera: model.camera)
     }
 }
 
 struct MainView: View {
     @ObservedObject var engine: DetectionEngine
-    @ObservedObject var settings: AppSettings
     let camera: CameraManager
-
-    @State private var showSettings = false
 
     var body: some View {
         ZStack {
@@ -53,28 +49,20 @@ struct MainView: View {
         .onChange(of: engine.isRunning) { _, running in
             UIApplication.shared.isIdleTimerDisabled = running
         }
-        .sheet(isPresented: $showSettings) {
-            SettingsView(settings: settings)
-        }
     }
 
     // MARK: - Pieces
 
     private var statusBar: some View {
-        HStack {
+        HStack(spacing: 8) {
             Circle()
                 .fill(statusColor)
                 .frame(width: 12, height: 12)
             Text(statusText)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.white)
+                .lineLimit(1)
             Spacer()
-            Button {
-                showSettings = true
-            } label: {
-                Image(systemName: "gearshape.fill")
-                    .foregroundStyle(.white)
-            }
         }
         .padding(12)
         .background(.black.opacity(0.55), in: Capsule())
@@ -105,27 +93,37 @@ struct MainView: View {
     }
 
     private var controls: some View {
-        HStack(spacing: 16) {
-            Button {
-                engine.isRunning ? engine.stop() : engine.start()
-            } label: {
-                Label(engine.isRunning ? "Stop" : "Start",
-                      systemImage: engine.isRunning ? "stop.fill" : "play.fill")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(engine.isRunning ? .red : .green)
-            .disabled(!engine.cameraReady || !settings.isReady)
-        }
-        .padding(.top, 8)
-        .overlay(alignment: .top) {
-            if !settings.isReady {
-                Text("Fill in Settings to enable watching")
+        VStack(spacing: 8) {
+            if !AppConfig.isConfigured {
+                Text("Set your values in Secrets.swift to enable watching")
                     .font(.caption2)
                     .foregroundStyle(.yellow)
-                    .offset(y: -14)
+            }
+            HStack(spacing: 12) {
+                Button {
+                    engine.isRunning ? engine.stop() : engine.start()
+                } label: {
+                    Label(engine.isRunning ? "Stop" : "Start",
+                          systemImage: engine.isRunning ? "stop.fill" : "play.fill")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(engine.isRunning ? .red : .green)
+                .disabled(!engine.cameraReady || !AppConfig.isConfigured)
+
+                Button {
+                    engine.sendTestSignal()
+                } label: {
+                    Label("Test ESP32", systemImage: "wifi")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                }
+                .buttonStyle(.bordered)
+                .tint(.white)
+                .disabled(AppConfig.esp32Host.isEmpty)
             }
         }
     }

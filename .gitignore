@@ -1,0 +1,22 @@
+# Xcode
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# macOS
+.DS_Store
+
+# Secrets — real credentials live here, never commit them.
+# Copy Secrets.example.swift to garage-vision/Secrets.swift and fill in.
+garage-vision/Secrets.swift
+.env

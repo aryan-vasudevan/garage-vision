@@ -1,0 +1,173 @@
+{
+  "version": "1.0",
+  "inputs": [
+    {
+      "type": "WorkflowImage",
+      "name": "image"
+    }
+  ],
+  "steps": [
+    {
+      "type": "roboflow_core/roboflow_object_detection_model@v3",
+      "name": "car_detector",
+      "images": "$inputs.image",
+      "model_id": "rfdetr-nano",
+      "confidence_mode": "custom",
+      "custom_confidence": 0.5,
+      "class_filter": [
+        "car",
+        "truck"
+      ]
+    },
+    {
+      "type": "Scale_Zone",
+      "name": "scale_driveway_zone",
+      "image": "$inputs.image"
+    },
+    {
+      "type": "Filter_In_Zone",
+      "name": "filter_in_zone",
+      "predictions": "$steps.car_detector.predictions",
+      "zone": "$steps.scale_driveway_zone.zone"
+    },
+    {
+      "type": "roboflow_core/dynamic_crop@v1",
+      "name": "crop_cars_in_zone",
+      "images": "$inputs.image",
+      "predictions": "$steps.filter_in_zone.in_zone"
+    },
+    {
+      "type": "roboflow_core/roboflow_object_detection_model@v3",
+      "name": "license_plate_detector",
+      "images": "$steps.crop_cars_in_zone.crops",
+      "model_id": "license-plate-recognition-rxg4e/4",
+      "confidence_mode": "custom",
+      "custom_confidence": 0.3
+    },
+    {
+      "type": "roboflow_core/dynamic_crop@v1",
+      "name": "crop_license_plates",
+      "images": "$steps.crop_cars_in_zone.crops",
+      "predictions": "$steps.license_plate_detector.predictions"
+    },
+    {
+      "type": "roboflow_core/image_preprocessing@v1",
+      "name": "flip_license_plates",
+      "image": "$steps.crop_license_plates.crops",
+      "task_type": "flip",
+      "flip_type": "horizontal"
+    },
+    {
+      "type": "roboflow_core/glm_ocr@v1",
+      "name": "license_plate_ocr",
+      "images": "$steps.flip_license_plates.image",
+      "task_type": "text-recognition",
+      "model_version": "glm-ocr"
+    },
+    {
+      "type": "roboflow_core/dimension_collapse@v1",
+      "name": "collapse_plate_text",
+      "data": "$steps.license_plate_ocr.parsed_output"
+    }
+  ],
+  "outputs": [
+    {
+      "type": "JsonField",
+      "name": "cars_in_zone",
+      "selector": "$steps.filter_in_zone.in_zone"
+    },
+    {
+      "type": "JsonField",
+      "name": "license_plates",
+      "selector": "$steps.license_plate_detector.predictions"
+    },
+    {
+      "type": "JsonField",
+      "name": "plate_text",
+      "selector": "$steps.collapse_plate_text.output"
+    }
+  ],
+  "dynamic_blocks_definitions": [
+    {
+      "type": "DynamicBlockDefinition",
+      "manifest": {
+        "type": "ManifestDescription",
+        "block_type": "Scale_Zone",
+        "description": "Scale the driveway polygon to the real frame size.",
+        "inputs": {
+          "image": {
+            "type": "DynamicInputDefinition",
+            "selector_types": [
+              "input_image",
+              "step_output"
+            ],
+            "selector_data_kind": {
+              "input_image": [
+                "image"
+              ],
+              "step_output": [
+                "image"
+              ]
+            }
+          }
+        },
+        "outputs": {
+          "zone": {
+            "type": "DynamicOutputDefinition",
+            "kind": [
+              "list_of_values"
+            ]
+          }
+        }
+      },
+      "code": {
+        "type": "PythonCode",
+        "run_function_code": "def run(self, image):\n    h, w = int(image.numpy_image.shape[0]), int(image.numpy_image.shape[1])\n    ref_w, ref_h = 1055.0, 1880.0\n    drawn = [[1055, 1880], [9, 1880], [1, 1220], [413, 1220], [758, 1231], [892, 1193], [1055, 1202]]\n    return {'zone': [[int(round(max(0.0, min(1.0, x / ref_w)) * (w - 1))), int(round(max(0.0, min(1.0, y / ref_h)) * (h - 1)))] for x, y in drawn]}\n"
+      }
+    },
+    {
+      "type": "DynamicBlockDefinition",
+      "manifest": {
+        "type": "ManifestDescription",
+        "block_type": "Filter_In_Zone",
+        "description": "Keep detections whose bottom-center is inside the zone.",
+        "inputs": {
+          "predictions": {
+            "type": "DynamicInputDefinition",
+            "selector_types": [
+              "step_output"
+            ],
+            "selector_data_kind": {
+              "step_output": [
+                "object_detection_prediction"
+              ]
+            }
+          },
+          "zone": {
+            "type": "DynamicInputDefinition",
+            "selector_types": [
+              "step_output"
+            ],
+            "selector_data_kind": {
+              "step_output": [
+                "list_of_values"
+              ]
+            }
+          }
+        },
+        "outputs": {
+          "in_zone": {
+            "type": "DynamicOutputDefinition",
+            "kind": [
+              "object_detection_prediction"
+            ]
+          }
+        }
+      },
+      "code": {
+        "type": "PythonCode",
+        "run_function_code": "def run(self, predictions, zone):\n    import numpy as np\n    poly = np.array(zone, dtype=float)\n    def inside(px, py):\n        n = len(poly); c = False; j = n - 1\n        for i in range(n):\n            xi, yi = poly[i]; xj, yj = poly[j]\n            if ((yi > py) != (yj > py)) and (px < (xj - xi) * (py - yi) / (yj - yi + 1e-9) + xi):\n                c = not c\n            j = i\n        return c\n    mask = np.array([inside((x1 + x2) / 2.0, y2) for (x1, y1, x2, y2) in predictions.xyxy], dtype=bool)\n    return {'in_zone': predictions[mask]}\n"
+      }
+    }
+  ]
+}

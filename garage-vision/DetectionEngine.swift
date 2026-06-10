@@ -2,7 +2,7 @@
 //  DetectionEngine.swift
 //  garage-vision
 //
-//  The ~2s loop: grab a frame -> Roboflow workflow -> match plate -> trigger ESP32.
+//  The ~2s loop: grab a frame -> Custom Workflow 5 -> match plate -> trigger ESP32.
 //
 
 import Foundation
@@ -32,13 +32,15 @@ final class DetectionEngine: ObservableObject {
     @Published private(set) var log: [LogEntry] = []
 
     let camera: CameraManager
-    let settings: AppSettings
 
     private var loopTask: Task<Void, Never>?
 
-    init(camera: CameraManager, settings: AppSettings) {
+    private var roboflow: RoboflowClient {
+        RoboflowClient(apiKey: AppConfig.roboflowAPIKey, endpoint: AppConfig.roboflowEndpoint)
+    }
+
+    init(camera: CameraManager) {
         self.camera = camera
-        self.settings = settings
     }
 
     func prepareCamera() async {
@@ -70,6 +72,19 @@ final class DetectionEngine: ObservableObject {
         addLog("Stopped.")
     }
 
+    /// Manually fire the ESP32 trigger once (test button). Bypasses detection and cooldown.
+    func sendTestSignal() {
+        Task {
+            addLog("Manual trigger → ESP32…")
+            do {
+                try await ESP32Client(host: AppConfig.esp32Host, path: AppConfig.esp32Path).trigger()
+                addLog("✅ ESP32 responded OK.")
+            } catch {
+                addLog("ESP32 error: \(error.localizedDescription)")
+            }
+        }
+    }
+
     // MARK: - Loop
 
     private func runLoop() async {
@@ -78,7 +93,7 @@ final class DetectionEngine: ObservableObject {
             let started = Date()
             await tick()
             let elapsed = Date().timeIntervalSince(started)
-            let remaining = max(0, settings.intervalSeconds - elapsed)
+            let remaining = max(0, AppConfig.intervalSeconds - elapsed)
             if remaining > 0 {
                 try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
             }
@@ -92,28 +107,23 @@ final class DetectionEngine: ObservableObject {
         }
 
         status = .processing
-        let client = RoboflowClient(
-            apiKey: settings.roboflowAPIKey,
-            workspace: settings.roboflowWorkspace,
-            workflowID: settings.roboflowWorkflowID,
-            endpoint: settings.roboflowEndpoint
-        )
-
         do {
-            let result = try await client.runWorkflow(imageJPEG: jpeg)
+            let result = try await roboflow.detectPlate(in: jpeg)
             guard isRunning else { return }
             lastPlates = result.plates
 
-            if let match = result.plates.first(where: { settings.plateMatches($0) }) {
+            if let match = result.plates.first(where: { AppConfig.plateMatches($0) }) {
                 status = .matched
                 addLog("Matched plate: \(match)")
                 await maybeTrigger()
             } else {
                 status = .scanning
                 if result.plates.isEmpty {
-                    addLog("No plate detected.")
+                    addLog(result.carsInZone > 0
+                           ? "Car in zone, no plate read yet."
+                           : "No car in driveway zone.")
                 } else {
-                    addLog("Saw: \(result.plates.joined(separator: ", "))")
+                    addLog("Saw plate(s): \(result.plates.joined(separator: ", "))")
                 }
             }
         } catch {
@@ -124,14 +134,14 @@ final class DetectionEngine: ObservableObject {
     }
 
     private func maybeTrigger() async {
-        if let last = lastTrigger, Date().timeIntervalSince(last) < settings.cooldownSeconds {
-            let wait = Int((settings.cooldownSeconds - Date().timeIntervalSince(last)).rounded())
+        if let last = lastTrigger, Date().timeIntervalSince(last) < AppConfig.cooldownSeconds {
+            let wait = Int((AppConfig.cooldownSeconds - Date().timeIntervalSince(last)).rounded())
             addLog("In cooldown (\(wait)s) — not re-triggering.")
             return
         }
 
         do {
-            try await ESP32Client(host: settings.esp32Host, path: settings.esp32Path).trigger()
+            try await ESP32Client(host: AppConfig.esp32Host, path: AppConfig.esp32Path).trigger()
             lastTrigger = Date()
             addLog("✅ Sent OPEN signal to ESP32.")
         } catch {
