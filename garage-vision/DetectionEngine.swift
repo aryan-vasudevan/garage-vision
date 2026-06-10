@@ -8,6 +8,7 @@
 
 import Foundation
 import Combine
+import UIKit
 
 @MainActor
 final class DetectionEngine: ObservableObject {
@@ -28,7 +29,11 @@ final class DetectionEngine: ObservableObject {
     @Published private(set) var status: Status = .stopped
     @Published private(set) var isRunning = false
     @Published private(set) var sourceReady = false
-    @Published private(set) var lastPlates: [String] = []
+    @Published private(set) var carInZone = false
+    /// The most recent plate the OCR read (persists until a new one is read).
+    @Published private(set) var lastPlateText: String?
+    /// Whether `lastPlateText` matched the target plate.
+    @Published private(set) var lastPlateMatched = false
     @Published private(set) var lastTrigger: Date?
     @Published private(set) var lastOpenedPlate: String?
     @Published private(set) var log: [LogEntry] = []
@@ -38,6 +43,7 @@ final class DetectionEngine: ObservableObject {
     private(set) var source: FrameProviding
 
     private var loopTask: Task<Void, Never>?
+    private var warmedUp = false
 
     private var roboflow: RoboflowClient {
         RoboflowClient(apiKey: AppConfig.roboflowAPIKey, endpoint: AppConfig.roboflowEndpoint)
@@ -53,9 +59,27 @@ final class DetectionEngine: ObservableObject {
             try await source.configure()
             sourceReady = true
             addLog("Source ready.")
+            warmUp()
         } catch {
             status = .error(error.localizedDescription)
             addLog("Source error: \(error.localizedDescription)")
+        }
+    }
+
+    /// Fire one throwaway inference so Roboflow loads its models before the first
+    /// real car appears (the serverless cold start is otherwise ~5-10s). Runs once.
+    private func warmUp() {
+        guard !warmedUp, AppConfig.canRun else { return }
+        warmedUp = true
+        Task {
+            addLog("Warming up Roboflow…")
+            let renderer = UIGraphicsImageRenderer(size: CGSize(width: 96, height: 96))
+            let jpeg = renderer.jpegData(withCompressionQuality: 0.5) { ctx in
+                UIColor.darkGray.setFill()
+                ctx.fill(CGRect(x: 0, y: 0, width: 96, height: 96))
+            }
+            _ = try? await roboflow.detectPlate(in: jpeg)
+            addLog("Roboflow warm — ready.")
         }
     }
 
@@ -83,6 +107,9 @@ final class DetectionEngine: ObservableObject {
         loopTask = nil
         source.stop()
         status = .stopped
+        carInZone = false
+        lastPlateText = nil
+        lastPlateMatched = false
         addLog("Stopped.")
     }
 
@@ -121,24 +148,31 @@ final class DetectionEngine: ObservableObject {
         }
 
         status = .processing
+        addLog("Frame \(jpeg.count / 1024) KB → Roboflow…")
+        let started = Date()
         do {
             let result = try await roboflow.detectPlate(in: jpeg)
+            addLog("Roboflow replied in \(String(format: "%.1f", Date().timeIntervalSince(started)))s")
             guard isRunning else { return }
-            lastPlates = result.plates
+            carInZone = result.carsInZone > 0
 
             if let match = result.plates.first(where: { AppConfig.plateMatches($0) }) {
+                lastPlateText = match
+                lastPlateMatched = true
                 status = .matched
                 addLog("Matched plate: \(match)")
                 await maybeTrigger(plate: match)
-            } else {
+            } else if let plate = result.plates.first {
+                lastPlateText = plate
+                lastPlateMatched = false
                 status = .scanning
-                if result.plates.isEmpty {
-                    addLog(result.carsInZone > 0
-                           ? "Car in zone, no plate read yet."
-                           : "No car in driveway zone.")
-                } else {
-                    addLog("Saw plate(s): \(result.plates.joined(separator: ", "))")
-                }
+                addLog("Saw plate: \(plate)")
+            } else {
+                // No plate this frame — keep showing the last one we read.
+                status = .scanning
+                addLog(result.carsInZone > 0
+                       ? "Car in zone, no plate read yet."
+                       : "No car in driveway zone.")
             }
         } catch {
             guard isRunning else { return }

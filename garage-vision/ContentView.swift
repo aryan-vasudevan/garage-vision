@@ -42,6 +42,7 @@ struct MainView: View {
 
             VStack {
                 statusBar
+                indicators
                 if replay != nil { sourcePicker }
                 Spacer()
                 openedBanner
@@ -89,17 +90,56 @@ struct MainView: View {
         .background(.black.opacity(0.55), in: Capsule())
     }
 
+    private var indicators: some View {
+        HStack(spacing: 10) {
+            pill(engine.carInZone ? "Car in Driveway" : "No Car in Driveway",
+                 background: engine.carInZone ? .blue : .black.opacity(0.55))
+            pill(engine.lastPlateText ?? "No plate",
+                 background: engine.lastPlateMatched ? .green
+                           : (engine.lastPlateText != nil ? .blue : .black.opacity(0.55)))
+        }
+    }
+
+    private func pill(_ text: String, background: Color) -> some View {
+        Text(text)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.white)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .padding(.horizontal, 12)
+            .background(background, in: Capsule())
+            .animation(.easeInOut(duration: 0.2), value: background)
+    }
+
     private var sourcePicker: some View {
-        Picker("Source", selection: $useReplay) {
-            Text("Camera").tag(false)
-            Text("Video").tag(true)
+        HStack(spacing: 0) {
+            sourceButton("Camera", selected: !useReplay) { setReplay(false) }
+            sourceButton("Video", selected: useReplay) { setReplay(true) }
         }
-        .pickerStyle(.segmented)
+        .padding(3)
+        .background(.black.opacity(0.55), in: Capsule())
         .disabled(engine.isRunning)
-        .onChange(of: useReplay) { _, replayOn in
-            guard let replay else { return }
-            Task { await engine.switchSource(to: replayOn ? replay : camera) }
+        .opacity(engine.isRunning ? 0.5 : 1)
+    }
+
+    private func sourceButton(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .background(selected ? Color.gray : Color.clear, in: Capsule())
         }
+        .buttonStyle(.plain)
+    }
+
+    private func setReplay(_ on: Bool) {
+        guard let replay, on != useReplay else { return }
+        useReplay = on
+        Task { await engine.switchSource(to: on ? replay : camera) }
     }
 
     @ViewBuilder
@@ -120,12 +160,6 @@ struct MainView: View {
 
     private var logPanel: some View {
         VStack(alignment: .leading, spacing: 4) {
-            if !engine.lastPlates.isEmpty {
-                Text("Last seen: \(engine.lastPlates.joined(separator: ", "))")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-            }
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(engine.log) { entry in
@@ -169,7 +203,7 @@ struct MainView: View {
                     Label("Test ESP32", systemImage: "wifi")
                         .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 14)
                 }
-                .buttonStyle(.bordered).tint(.white)
+                .buttonStyle(.borderedProminent).tint(.gray)
                 .disabled(AppConfig.esp32Host.isEmpty)
             }
         }

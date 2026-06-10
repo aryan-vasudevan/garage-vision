@@ -51,6 +51,8 @@ struct RoboflowClient {
         let plates: [String]
         /// Number of vehicles detected inside the driveway zone.
         let carsInZone: Int
+        /// Number of license-plate boxes detected (before/independent of OCR).
+        let platesDetected: Int
     }
 
     /// The embedded workflow specification, loaded once from the app bundle.
@@ -126,14 +128,26 @@ struct RoboflowClient {
         }
 
         let plates = plateStrings(from: first["plate_text"])
+        let carsInZone = detectionCount(from: first["cars_in_zone"])
+        let platesDetected = detectionCount(from: first["license_plates"])
+        return Result(plates: plates, carsInZone: carsInZone, platesDetected: platesDetected)
+    }
 
-        var carsInZone = 0
-        if let zone = first["cars_in_zone"] as? [String: Any],
-           let predictions = zone["predictions"] as? [Any] {
-            carsInZone = predictions.count
+    /// Count detections in an output that is either a `{predictions:[...]}` object
+    /// or a list of such objects (the plate detector runs per car-crop, so it nests).
+    private static func detectionCount(from value: Any?) -> Int {
+        if let dict = value as? [String: Any], let preds = dict["predictions"] as? [Any] {
+            return preds.count
         }
-
-        return Result(plates: plates, carsInZone: carsInZone)
+        if let array = value as? [Any] {
+            return array.reduce(0) { total, element in
+                if let dict = element as? [String: Any], let preds = dict["predictions"] as? [Any] {
+                    return total + preds.count
+                }
+                return total
+            }
+        }
+        return 0
     }
 
     /// `plate_text` is `null`, a string, or (nested) lists of strings — the OCR
