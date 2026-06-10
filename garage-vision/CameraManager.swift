@@ -26,7 +26,7 @@ enum CameraError: LocalizedError {
     }
 }
 
-nonisolated final class CameraManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, @unchecked Sendable {
+nonisolated final class CameraManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, FrameProviding, @unchecked Sendable {
     let session = AVCaptureSession()
     let frameStore = FrameStore()
 

@@ -23,7 +23,10 @@ enum AppConfig {
     static var targetPlate: String { Secrets.targetPlate }
 
     // MARK: Loop timing
-    static let intervalSeconds: Double = 2.0
+    // The Roboflow round-trip (~1.4s idle, ~2.2s when reading a plate) is the real
+    // floor — the loop runs back-to-back whenever a cycle exceeds this. 1.0s removes
+    // idle wait between scans; lower buys nothing. Raise it to spend fewer credits.
+    static let intervalSeconds: Double = 1.0
     static let cooldownSeconds: Double = 30.0
 
     // MARK: Helpers
@@ -40,9 +43,14 @@ enum AppConfig {
         return normalizedPlate(candidate) == target
     }
 
-    /// True once the placeholder secrets have been replaced with real values.
+    /// Enough to run detection (needs a real Roboflow key). ESP32/plate only affect
+    /// whether a match actually triggers the opener — handy for replay testing.
+    static var canRun: Bool {
+        roboflowAPIKey != "YOUR_ROBOFLOW_API_KEY" && !roboflowAPIKey.isEmpty
+    }
+
+    /// True once every placeholder secret has been replaced with real values.
     static var isConfigured: Bool {
-        roboflowAPIKey != "YOUR_ROBOFLOW_API_KEY" && !roboflowAPIKey.isEmpty &&
-        !esp32Host.isEmpty && !targetPlate.isEmpty
+        canRun && !esp32Host.isEmpty && !targetPlate.isEmpty && targetPlate != "ABC1234"
     }
 }

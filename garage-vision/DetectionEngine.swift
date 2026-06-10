@@ -3,6 +3,7 @@
 //  garage-vision
 //
 //  The ~2s loop: grab a frame -> Custom Workflow 5 -> match plate -> trigger ESP32.
+//  Frames come from a swappable FrameProviding source (live camera or video replay).
 //
 
 import Foundation
@@ -26,12 +27,15 @@ final class DetectionEngine: ObservableObject {
 
     @Published private(set) var status: Status = .stopped
     @Published private(set) var isRunning = false
-    @Published private(set) var cameraReady = false
+    @Published private(set) var sourceReady = false
     @Published private(set) var lastPlates: [String] = []
     @Published private(set) var lastTrigger: Date?
+    @Published private(set) var lastOpenedPlate: String?
     @Published private(set) var log: [LogEntry] = []
+    /// Bumped each time the opener actually fires, to drive the on-screen flash/haptic.
+    @Published private(set) var openPulse = 0
 
-    let camera: CameraManager
+    private(set) var source: FrameProviding
 
     private var loopTask: Task<Void, Never>?
 
@@ -39,24 +43,34 @@ final class DetectionEngine: ObservableObject {
         RoboflowClient(apiKey: AppConfig.roboflowAPIKey, endpoint: AppConfig.roboflowEndpoint)
     }
 
-    init(camera: CameraManager) {
-        self.camera = camera
+    init(source: FrameProviding) {
+        self.source = source
     }
 
-    func prepareCamera() async {
-        guard !cameraReady else { return }
+    func prepareSource() async {
+        guard !sourceReady else { return }
         do {
-            try await camera.configure()
-            cameraReady = true
-            addLog("Camera ready.")
+            try await source.configure()
+            sourceReady = true
+            addLog("Source ready.")
         } catch {
             status = .error(error.localizedDescription)
-            addLog("Camera error: \(error.localizedDescription)")
+            addLog("Source error: \(error.localizedDescription)")
         }
     }
 
+    /// Swap the frame source (camera <-> video). Only allowed while stopped.
+    func switchSource(to newSource: FrameProviding) async {
+        guard !isRunning else { return }
+        source.stop()
+        source = newSource
+        sourceReady = false
+        status = .stopped
+        await prepareSource()
+    }
+
     func start() {
-        guard !isRunning, cameraReady else { return }
+        guard !isRunning, sourceReady else { return }
         isRunning = true
         status = .scanning
         addLog("Started watching.")
@@ -67,7 +81,7 @@ final class DetectionEngine: ObservableObject {
         isRunning = false
         loopTask?.cancel()
         loopTask = nil
-        camera.stop()
+        source.stop()
         status = .stopped
         addLog("Stopped.")
     }
@@ -88,7 +102,7 @@ final class DetectionEngine: ObservableObject {
     // MARK: - Loop
 
     private func runLoop() async {
-        camera.start()
+        source.start()
         while isRunning && !Task.isCancelled {
             let started = Date()
             await tick()
@@ -101,8 +115,8 @@ final class DetectionEngine: ObservableObject {
     }
 
     private func tick() async {
-        guard let jpeg = await camera.captureFrame() else {
-            addLog("No camera frame available.")
+        guard let jpeg = await source.captureFrame() else {
+            addLog("No frame available.")
             return
         }
 
@@ -115,7 +129,7 @@ final class DetectionEngine: ObservableObject {
             if let match = result.plates.first(where: { AppConfig.plateMatches($0) }) {
                 status = .matched
                 addLog("Matched plate: \(match)")
-                await maybeTrigger()
+                await maybeTrigger(plate: match)
             } else {
                 status = .scanning
                 if result.plates.isEmpty {
@@ -133,7 +147,7 @@ final class DetectionEngine: ObservableObject {
         }
     }
 
-    private func maybeTrigger() async {
+    private func maybeTrigger(plate: String) async {
         if let last = lastTrigger, Date().timeIntervalSince(last) < AppConfig.cooldownSeconds {
             let wait = Int((AppConfig.cooldownSeconds - Date().timeIntervalSince(last)).rounded())
             addLog("In cooldown (\(wait)s) — not re-triggering.")
@@ -143,6 +157,8 @@ final class DetectionEngine: ObservableObject {
         do {
             try await ESP32Client(host: AppConfig.esp32Host, path: AppConfig.esp32Path).trigger()
             lastTrigger = Date()
+            lastOpenedPlate = plate
+            openPulse += 1
             addLog("✅ Sent OPEN signal to ESP32.")
         } catch {
             addLog("ESP32 error: \(error.localizedDescription)")
