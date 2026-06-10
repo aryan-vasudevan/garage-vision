@@ -20,3 +20,14 @@ build/
 # Copy Secrets.example.swift to garage-vision/Secrets.swift and fill in.
 garage-vision/Secrets.swift
 .env
+
+# Test-env replay video — kept locally, too big for git (139M > GitHub's 100M limit).
+# The Video toggle is disabled gracefully when it's absent.
+garage-vision/parking.mov
+*.mov
+
+# Stray captured frames / test artifacts
+IMG_*.JPG
+IMG_*.jpg
+*.b64
+test.png

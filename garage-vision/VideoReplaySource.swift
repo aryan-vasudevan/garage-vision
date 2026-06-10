@@ -75,6 +75,10 @@ nonisolated final class VideoReplaySource: FrameProviding, @unchecked Sendable {
         }
 
         var image = CIImage(cvPixelBuffer: pixelBuffer).oriented(orientation)
+        // The recorded clip is a mirrored selfie; flip it horizontally so it matches
+        // the un-mirrored live camera (the workflow has no flip step).
+        let e = image.extent
+        image = image.transformed(by: CGAffineTransform(translationX: e.minX + e.maxX, y: 0).scaledBy(x: -1, y: 1))
         let longest = max(image.extent.width, image.extent.height)
         if longest > maxDimension {
             let scale = maxDimension / longest

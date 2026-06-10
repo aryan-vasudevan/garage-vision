@@ -66,7 +66,9 @@ nonisolated final class FrameStore: @unchecked Sendable {
     }
 
     private func jpeg(from pixelBuffer: CVPixelBuffer) -> Data? {
-        var image = CIImage(cvPixelBuffer: pixelBuffer)
+        // Front-camera data-output buffers arrive landscape; rotate to portrait
+        // so the frame (and the plate) is upright. Flip to `.left` if it's upside down.
+        var image = CIImage(cvPixelBuffer: pixelBuffer).oriented(.right)
         let longest = max(image.extent.width, image.extent.height)
         if longest > maxDimension {
             let scale = maxDimension / longest

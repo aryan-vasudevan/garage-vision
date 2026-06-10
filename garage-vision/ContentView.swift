@@ -116,7 +116,7 @@ struct MainView: View {
     private var sourcePicker: some View {
         HStack(spacing: 0) {
             sourceButton("Camera", selected: !useReplay) { setReplay(false) }
-            sourceButton("Video", selected: useReplay) { setReplay(true) }
+            sourceButton("Video (Test env)", selected: useReplay) { setReplay(true) }
         }
         .padding(3)
         .background(.black.opacity(0.55), in: Capsule())
@@ -129,6 +129,8 @@ struct MainView: View {
             Text(title)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)
                 .background(selected ? Color.gray : Color.clear, in: Capsule())
@@ -206,6 +208,15 @@ struct MainView: View {
                 .buttonStyle(.borderedProminent).tint(.gray)
                 .disabled(AppConfig.esp32Host.isEmpty)
             }
+
+            Button {
+                engine.saveCurrentFrame()
+            } label: {
+                Label("Save Frame (calibrate zone)", systemImage: "camera.viewfinder")
+                    .font(.subheadline).frame(maxWidth: .infinity).padding(.vertical, 10)
+            }
+            .buttonStyle(.borderedProminent).tint(.gray)
+            .disabled(!engine.isRunning)
         }
     }
 

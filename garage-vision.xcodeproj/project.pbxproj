@@ -258,6 +258,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Used to watch the driveway and read license plates.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Used to send the open signal to the garage ESP32 on your local network.";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Used to save a camera frame so you can calibrate the driveway zone.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -292,6 +293,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Used to watch the driveway and read license plates.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Used to send the open signal to the garage ESP32 on your local network.";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Used to save a camera frame so you can calibrate the driveway zone.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

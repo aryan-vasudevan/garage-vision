@@ -86,7 +86,9 @@ nonisolated final class CameraManager: NSObject, AVCaptureVideoDataOutputSampleB
         session.beginConfiguration()
         defer { session.commitConfiguration() }
 
-        session.sessionPreset = .high
+        // Match the recorded clip's 9:16 (portrait) aspect so the driveway zone,
+        // which is calibrated on a 9:16 reference frame, lines up with live frames.
+        session.sessionPreset = session.canSetSessionPreset(.hd1920x1080) ? .hd1920x1080 : .high
 
         guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front) else {
             throw CameraError.noCamera
@@ -102,11 +104,9 @@ nonisolated final class CameraManager: NSObject, AVCaptureVideoDataOutputSampleB
         session.addOutput(videoOutput)
 
         if let connection = videoOutput.connection(with: .video) {
-            // Rotate to portrait so plates read upright for OCR.
-            if connection.isVideoRotationAngleSupported(90) {
-                connection.videoRotationAngle = 90
-            }
-            // Do NOT mirror: a mirrored front-camera image flips the plate text.
+            // Keep the frame un-mirrored so the (asymmetric) driveway zone lines up
+            // and the plate reads forwards. The workflow's flip step is removed to
+            // match (see workflow.json). Rotation to portrait is done in FrameStore.
             if connection.isVideoMirroringSupported {
                 connection.automaticallyAdjustsVideoMirroring = false
                 connection.isVideoMirrored = false

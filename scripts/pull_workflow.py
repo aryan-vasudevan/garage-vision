@@ -99,10 +99,10 @@ spec = {
          "confidence_mode": "custom", "custom_confidence": 0.3},
         {"type": "roboflow_core/dynamic_crop@v1", "name": "crop_license_plates",
          "images": "$steps.crop_cars_in_zone.crops", "predictions": "$steps.license_plate_detector.predictions"},
-        {"type": "roboflow_core/image_preprocessing@v1", "name": "flip_license_plates",
-         "image": "$steps.crop_license_plates.crops", "task_type": "flip", "flip_type": "horizontal"},
+        # No flip step: the live camera sends an un-mirrored frame (forward plate),
+        # so OCR reads the crop directly. (VideoReplaySource flips the clip to match.)
         {"type": "roboflow_core/glm_ocr@v1", "name": "license_plate_ocr",
-         "images": "$steps.flip_license_plates.image", "task_type": "text-recognition", "model_version": "glm-ocr"},
+         "images": "$steps.crop_license_plates.crops", "task_type": "text-recognition", "model_version": "glm-ocr"},
         {"type": "roboflow_core/dimension_collapse@v1", "name": "collapse_plate_text",
          "data": "$steps.license_plate_ocr.parsed_output"},
     ],

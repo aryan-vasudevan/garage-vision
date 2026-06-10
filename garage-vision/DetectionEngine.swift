@@ -113,6 +113,19 @@ final class DetectionEngine: ObservableObject {
         addLog("Stopped.")
     }
 
+    /// Grab the exact frame the active source is sending to Roboflow and save it to
+    /// Photos, so the driveway zone can be redrawn on the real live-camera framing.
+    func saveCurrentFrame() {
+        Task {
+            guard let jpeg = await source.captureFrame(), let image = UIImage(data: jpeg) else {
+                addLog("Couldn't grab a frame to save.")
+                return
+            }
+            UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
+            addLog("Saved frame to Photos (\(jpeg.count / 1024) KB) — redraw the zone on it.")
+        }
+    }
+
     /// Manually fire the ESP32 trigger once (test button). Bypasses detection and cooldown.
     func sendTestSignal() {
         Task {
