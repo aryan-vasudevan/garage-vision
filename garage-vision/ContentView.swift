@@ -51,7 +51,10 @@ struct MainView: View {
             }
             .padding()
         }
-        .task { await engine.prepareSource() }
+        .task {
+            LocalNetworkPrimer.shared.prime(host: AppConfig.esp32Host)   // surface the Local Network prompt
+            await engine.prepareSource()
+        }
         .onChange(of: engine.isRunning) { _, running in
             UIApplication.shared.isIdleTimerDisabled = running
         }
