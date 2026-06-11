@@ -11,7 +11,7 @@ final class AppModel {
     let camera = CameraManager()
     let replay = VideoReplaySource()          // nil if the bundled video is missing
     let engine: DetectionEngine
-
+ 
     init() {
         engine = DetectionEngine(source: camera)
     }
@@ -175,7 +175,7 @@ struct MainView: View {
                     }
                 }
             }
-            .frame(height: 130)
+            .frame(height: 65)
         }
         .padding(10)
         .background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 12))

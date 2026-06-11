@@ -115,7 +115,7 @@
       },
       "code": {
         "type": "PythonCode",
-        "run_function_code": "def run(self, image):\n    h, w = int(image.numpy_image.shape[0]), int(image.numpy_image.shape[1])\n    ref_w, ref_h = 1055.0, 1880.0\n    drawn = [[1055, 1880], [9, 1880], [1, 1220], [413, 1220], [758, 1231], [892, 1193], [1055, 1202]]\n    return {'zone': [[int(round(max(0.0, min(1.0, x / ref_w)) * (w - 1))), int(round(max(0.0, min(1.0, y / ref_h)) * (h - 1)))] for x, y in drawn]}\n"
+        "run_function_code": "def run(self, image):\n    h, w = int(image.numpy_image.shape[0]), int(image.numpy_image.shape[1])\n    ref_w, ref_h = 1320.0, 2362.0\n    drawn = [[1317, 1496], [1, 1589], [5, 2344], [1311, 2348]]\n    return {'zone': [[int(round(max(0.0, min(1.0, x / ref_w)) * (w - 1))), int(round(max(0.0, min(1.0, y / ref_h)) * (h - 1)))] for x, y in drawn]}\n"
       }
     },
     {

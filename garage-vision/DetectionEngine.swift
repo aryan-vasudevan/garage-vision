@@ -174,7 +174,8 @@ final class DetectionEngine: ObservableObject {
                 lastPlateMatched = true
                 status = .matched
                 addLog("Matched plate: \(match)")
-                await maybeTrigger(plate: match)
+                await openAndStop(plate: match)
+                return
             } else if let plate = result.plates.first {
                 lastPlateText = plate
                 lastPlateMatched = false
@@ -194,22 +195,27 @@ final class DetectionEngine: ObservableObject {
         }
     }
 
-    private func maybeTrigger(plate: String) async {
-        if let last = lastTrigger, Date().timeIntervalSince(last) < AppConfig.cooldownSeconds {
-            let wait = Int((AppConfig.cooldownSeconds - Date().timeIntervalSince(last)).rounded())
-            addLog("In cooldown (\(wait)s) — not re-triggering.")
-            return
-        }
-
+    /// Plate matched: send the open signal once, then STOP the loop. The opener is a
+    /// toggle, so we must not keep firing while the car sits in view — one shot per
+    /// run. Tap Start again (or relaunch) to re-arm. If the ESP32 is unreachable we
+    /// don't stop, so the next match retries.
+    private func openAndStop(plate: String) async {
         do {
             try await ESP32Client(host: AppConfig.esp32Host, path: AppConfig.esp32Path).trigger()
-            lastTrigger = Date()
-            lastOpenedPlate = plate
-            openPulse += 1
-            addLog("✅ Sent OPEN signal to ESP32.")
         } catch {
-            addLog("ESP32 error: \(error.localizedDescription)")
+            addLog("ESP32 error: \(error.localizedDescription) — will retry on next match.")
+            return
         }
+        lastTrigger = Date()
+        lastOpenedPlate = plate
+        openPulse += 1
+        addLog("✅ Opened garage for \(plate). Stopping — tap Start (or relaunch) to re-arm.")
+
+        // One-shot: end the inference loop but KEEP the source running so the live
+        // preview stays up. Tap Start to re-arm, or Stop to fully end the camera.
+        isRunning = false
+        loopTask?.cancel()
+        loopTask = nil
     }
 
     // MARK: - Log
