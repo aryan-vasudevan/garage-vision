@@ -28,6 +28,9 @@ final class DetectionEngine: ObservableObject {
 
     @Published private(set) var status: Status = .stopped
     @Published private(set) var isRunning = false
+    /// True while the camera session is live — stays true after a match (so the
+    /// preview keeps showing and the recording keeps going) until Stop.
+    @Published private(set) var cameraActive = false
     @Published private(set) var sourceReady = false
     @Published private(set) var carInZone = false
     /// The most recent plate the OCR read (persists until a new one is read).
@@ -96,6 +99,7 @@ final class DetectionEngine: ObservableObject {
     func start() {
         guard !isRunning, sourceReady else { return }
         isRunning = true
+        cameraActive = true
         status = .scanning
         addLog("Started watching.")
         loopTask = Task { [weak self] in await self?.runLoop() }
@@ -103,14 +107,16 @@ final class DetectionEngine: ObservableObject {
 
     func stop() {
         isRunning = false
+        cameraActive = false
         loopTask?.cancel()
         loopTask = nil
+        source.stopRecording()   // finalize + save the run's footage to Photos
         source.stop()
         status = .stopped
         carInZone = false
         lastPlateText = nil
         lastPlateMatched = false
-        addLog("Stopped.")
+        addLog("Stopped — footage saved to Photos.")
     }
 
     /// Grab the exact frame the active source is sending to Roboflow and save it to
@@ -143,6 +149,7 @@ final class DetectionEngine: ObservableObject {
 
     private func runLoop() async {
         source.start()
+        source.startRecording()
         while isRunning && !Task.isCancelled {
             let started = Date()
             await tick()

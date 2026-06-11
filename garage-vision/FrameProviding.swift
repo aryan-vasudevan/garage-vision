@@ -18,4 +18,13 @@ protocol FrameProviding: AnyObject, Sendable {
     func stop()
     /// The next available frame as JPEG, or nil if none is ready.
     func captureFrame() async -> Data?
+    /// Start recording the raw footage of this run (camera only; no-op otherwise).
+    func startRecording()
+    /// Stop recording and persist the footage (camera saves it to Photos).
+    func stopRecording()
+}
+
+extension FrameProviding {
+    func startRecording() {}
+    func stopRecording() {}
 }

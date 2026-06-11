@@ -9,6 +9,7 @@
 
 import AVFoundation
 import CoreMedia
+import UIKit
 
 enum CameraError: LocalizedError {
     case permissionDenied
@@ -26,13 +27,14 @@ enum CameraError: LocalizedError {
     }
 }
 
-nonisolated final class CameraManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, FrameProviding, @unchecked Sendable {
+nonisolated final class CameraManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureFileOutputRecordingDelegate, FrameProviding, @unchecked Sendable {
     let session = AVCaptureSession()
     let frameStore = FrameStore()
 
     private let sessionQueue = DispatchQueue(label: "garage.camera.session")
     private let videoQueue = DispatchQueue(label: "garage.camera.video")
     private let videoOutput = AVCaptureVideoDataOutput()
+    private let movieOutput = AVCaptureMovieFileOutput()
 
     /// Request permission (if needed) and wire up the session. Throws on failure.
     func configure() async throws {
@@ -58,6 +60,23 @@ nonisolated final class CameraManager: NSObject, AVCaptureVideoDataOutputSampleB
     func stop() {
         sessionQueue.async {
             if self.session.isRunning { self.session.stopRunning() }
+        }
+    }
+
+    // MARK: - Recording (raw session footage → Photos)
+
+    func startRecording() {
+        sessionQueue.async {
+            guard self.session.outputs.contains(self.movieOutput), !self.movieOutput.isRecording else { return }
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("garage-\(Int(Date().timeIntervalSince1970)).mov")
+            self.movieOutput.startRecording(to: url, recordingDelegate: self)
+        }
+    }
+
+    func stopRecording() {
+        sessionQueue.async {
+            if self.movieOutput.isRecording { self.movieOutput.stopRecording() }
         }
     }
 
@@ -112,6 +131,21 @@ nonisolated final class CameraManager: NSObject, AVCaptureVideoDataOutputSampleB
                 connection.isVideoMirrored = false
             }
         }
+
+        // Movie output records the raw session footage (saved to Photos on stop).
+        // Coexists with the data output on iOS 16+. Recorded upright + un-mirrored.
+        if session.canAddOutput(movieOutput) {
+            session.addOutput(movieOutput)
+            if let connection = movieOutput.connection(with: .video) {
+                if connection.isVideoRotationAngleSupported(90) {
+                    connection.videoRotationAngle = 90
+                }
+                if connection.isVideoMirroringSupported {
+                    connection.automaticallyAdjustsVideoMirroring = false
+                    connection.isVideoMirrored = false
+                }
+            }
+        }
     }
 
     // MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
@@ -121,5 +155,18 @@ nonisolated final class CameraManager: NSObject, AVCaptureVideoDataOutputSampleB
                        from connection: AVCaptureConnection) {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         frameStore.submit(pixelBuffer)
+    }
+
+    // MARK: - AVCaptureFileOutputRecordingDelegate
+
+    func fileOutput(_ output: AVCaptureFileOutput, didFinishRecordingTo outputFileURL: URL,
+                    from connections: [AVCaptureConnection], error: Error?) {
+        // A normal stop sometimes surfaces as an "error" with a usable file — save if we can.
+        let finishedOK = (error == nil) ||
+            ((error as NSError?)?.userInfo[AVErrorRecordingSuccessfullyFinishedKey] as? Bool == true)
+        guard finishedOK, UIVideoAtPathIsCompatibleWithSavedPhotosAlbum(outputFileURL.path) else { return }
+        DispatchQueue.main.async {
+            UISaveVideoAtPathToSavedPhotosAlbum(outputFileURL.path, nil, nil, nil)
+        }
     }
 }

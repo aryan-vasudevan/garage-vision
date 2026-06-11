@@ -55,8 +55,8 @@ struct MainView: View {
             LocalNetworkPrimer.shared.prime(host: AppConfig.esp32Host)   // surface the Local Network prompt
             await engine.prepareSource()
         }
-        .onChange(of: engine.isRunning) { _, running in
-            UIApplication.shared.isIdleTimerDisabled = running
+        .onChange(of: engine.cameraActive) { _, active in
+            UIApplication.shared.isIdleTimerDisabled = active
         }
         .onChange(of: engine.openPulse) { _, _ in
             flashOpacity = 0.6
@@ -123,8 +123,8 @@ struct MainView: View {
         }
         .padding(3)
         .background(.black.opacity(0.55), in: Capsule())
-        .disabled(engine.isRunning)
-        .opacity(engine.isRunning ? 0.5 : 1)
+        .disabled(engine.cameraActive)
+        .opacity(engine.cameraActive ? 0.5 : 1)
     }
 
     private func sourceButton(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
@@ -192,14 +192,14 @@ struct MainView: View {
             }
             HStack(spacing: 12) {
                 Button {
-                    engine.isRunning ? engine.stop() : engine.start()
+                    engine.cameraActive ? engine.stop() : engine.start()
                 } label: {
-                    Label(engine.isRunning ? "Stop" : "Start",
-                          systemImage: engine.isRunning ? "stop.fill" : "play.fill")
+                    Label(engine.cameraActive ? "Stop" : "Start",
+                          systemImage: engine.cameraActive ? "stop.fill" : "play.fill")
                         .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 14)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(engine.isRunning ? .red : .green)
+                .tint(engine.cameraActive ? .red : .green)
                 .disabled(!engine.sourceReady || !AppConfig.canRun)
 
                 Button {
